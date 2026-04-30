@@ -106,6 +106,23 @@ public class HunterBot : IPlayerBot
             break;
         }
 
+        if (direction == Direction.North)
+        {
+            direction = Direction.South;
+        }
+        else if (direction == Direction.South)
+        {
+            direction = Direction.North;
+        }
+        else if (direction == Direction.East)
+        {
+            direction = Direction.West;
+        }
+        else if (direction == Direction.West)
+        {
+            direction = Direction.East;
+        }
+
         context.MoveTank(direction);
         return;
     }
