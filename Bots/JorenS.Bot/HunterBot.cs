@@ -42,7 +42,7 @@ public class HunterBot : IPlayerBot
         var target = new Coordinate(_tankToChase.X, _tankToChase.Y);
 
         var path = FindPath(context, start, target);
-        if (path == null || path.Count == 0)
+        if (path.Count == 0)
         {
             return;
         }
