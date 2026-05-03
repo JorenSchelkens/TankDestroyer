@@ -5,7 +5,7 @@ namespace JorenS.Bot;
 [Bot("Hunter", "Joren", "CC0404")]
 public class HunterBot : IPlayerBot
 {
-    private Random _random = new();
+    private readonly Random _random = new();
     private ITank? _tankToChase = null;
 
     public void DoTurn(ITurnContext context)
@@ -24,7 +24,10 @@ public class HunterBot : IPlayerBot
             return;
         }
 
-        var otherTanks = context.GetTanks().Where(v => v.OwnerId != context.Tank.OwnerId && !v.Destroyed).ToArray();
+        var otherTanks = context.GetTanks()
+            .Where(v => v.OwnerId != context.Tank.OwnerId && !v.Destroyed)
+            .ToArray();
+
         _tankToChase = otherTanks[_random.Next(0, otherTanks.Length)];
     }
 
@@ -35,97 +38,119 @@ public class HunterBot : IPlayerBot
             return;
         }
 
-        var xDifference = _tankToChase.X - context.Tank.X;
-        var yDifference = _tankToChase.Y - context.Tank.Y;
+        var start = new Coordinate(context.Tank.X, context.Tank.Y);
+        var target = new Coordinate(_tankToChase.X, _tankToChase.Y);
 
-        var newXPosition = context.Tank.X;
-        var newYPosition = context.Tank.Y;
-        Direction direction;
-
-        switch (xDifference, yDifference)
+        var path = FindPath(context, start, target);
+        if (path == null || path.Count == 0)
         {
-            case (_, < 0):
-                direction = Direction.North;
-                newYPosition -= 1;
-                break;
-            case (_, > 0):
-                direction = Direction.South;
-                newYPosition += 1;
-                break;
-            case ( < 0, _):
-                direction = Direction.West;
-                newXPosition += 1;
-                break;
-            case ( > 0, _):
-                direction = Direction.East;
-                newXPosition -= 1;
-                break;
-            default:
-                direction = Direction.South;
-                break;
+            return;
         }
 
-        while (context.GetTile(newYPosition, newXPosition).TileType == TileType.Water)
-        {
-            if (newYPosition != context.Tank.Y)
-            {
-                newYPosition = context.Tank.Y;
-                switch (_tankToChase.X - newXPosition)
-                {
-                    case < 0:
-                        newXPosition += 1;
-                        direction = Direction.West;
-                        break;
-                    case > 0:
-                        newXPosition -= 1;
-                        direction = Direction.East;
-                        break;
-                }
+        var next = path[0];
 
-                continue;
-            }
+        var dx = next.X - start.X;
+        var dy = next.Y - start.Y;
 
-            if (newXPosition != context.Tank.X)
-            {
-                newXPosition = context.Tank.X;
-                switch (_tankToChase.Y - newYPosition)
-                {
-                    case < 0:
-                        newYPosition -= 1;
-                        direction = Direction.North;
-                        break;
-                    case > 0:
-                        newYPosition += 1;
-                        direction = Direction.South;
-                        break;
-                }
-
-                continue;
-            }
-
-            break;
-        }
-
-        if (direction == Direction.North)
-        {
-            direction = Direction.South;
-        }
-        else if (direction == Direction.South)
-        {
-            direction = Direction.North;
-        }
-        else if (direction == Direction.East)
-        {
-            direction = Direction.West;
-        }
-        else if (direction == Direction.West)
-        {
-            direction = Direction.East;
-        }
+        var direction = GetDirectionFromDelta(dx, dy);
 
         context.MoveTank(direction);
-        return;
     }
+
+    private List<Coordinate> FindPath(ITurnContext context, Coordinate start, Coordinate target)
+    {
+        var queue = new Queue<Coordinate>();
+        var cameFrom = new Dictionary<Coordinate, Coordinate>();
+
+        var occupied = new HashSet<Coordinate>();
+
+        foreach (var tank in context.GetTanks())
+        {
+            if (tank.OwnerId == context.Tank.OwnerId)
+            {
+                continue;
+            }
+
+            if (tank.OwnerId == _tankToChase!.OwnerId)
+            {
+                continue;
+            }
+
+            occupied.Add(new Coordinate(tank.X, tank.Y));
+        }
+
+        queue.Enqueue(start);
+        cameFrom[start] = start;
+
+        var directions = new (int dx, int dy)[]
+        {
+            (0, -1),
+            (0, 1),
+            (-1, 0),
+            (1, 0)
+        };
+
+        while (queue.Count > 0)
+        {
+            var current = queue.Dequeue();
+            if (current == target)
+            {
+                break;
+            }
+
+            foreach (var (dx, dy) in directions)
+            {
+                var next = new Coordinate(current.X + dx, current.Y + dy);
+                if (next.X < 0 
+                    || next.Y < 0 
+                    || next.X >= context.GetMapWidth() 
+                    || next.Y >= context.GetMapHeight())
+                {
+                    continue;
+                }
+
+                if (cameFrom.ContainsKey(next))
+                {
+                    continue;
+                }
+
+                var tile = context.GetTile(next.Y, next.X);
+                if (tile.TileType == TileType.Water)
+                {
+                    continue;
+                }
+
+                if (occupied.Contains(next))
+                {
+                    continue;
+                }
+
+                queue.Enqueue(next);
+                cameFrom[next] = current;
+            }
+        }
+
+        var path = new List<Coordinate>();
+        var cur = target;
+
+        while (cur != start)
+        {
+            path.Add(cur);
+            cur = cameFrom[cur];
+        }
+
+        path.Reverse();
+        return path;
+    }
+
+    private static Direction GetDirectionFromDelta(int dx, int dy) => (dx, dy) switch
+    {
+        (1, _) => Direction.West,
+        (-1, _) => Direction.East,
+        (_, 1) => Direction.North,
+        (_, -1) => Direction.South,
+        _ => throw new Exception("Invalid movement delta"),
+    };
 
     private void RotateToDirectionOfTankToChase(ITurnContext context)
     {
@@ -136,19 +161,18 @@ public class HunterBot : IPlayerBot
 
         var xDifference = _tankToChase.X - context.Tank.X;
         var yDifference = _tankToChase.Y - context.Tank.Y;
-
         var direction = (xDifference, yDifference) switch
         {
             (0, < 0) => TurretDirection.South,
-            (> 0, < 0) => TurretDirection.SouthWest,
-            (< 0, < 0) => TurretDirection.SouthEast,
+            ( > 0, < 0) => TurretDirection.SouthWest,
+            ( < 0, < 0) => TurretDirection.SouthEast,
 
             (0, > 0) => TurretDirection.North,
-            (> 0, > 0) => TurretDirection.NorthWest,
-            (< 0, > 0) => TurretDirection.NorthEast,
+            ( > 0, > 0) => TurretDirection.NorthWest,
+            ( < 0, > 0) => TurretDirection.NorthEast,
 
-            (> 0, 0) => TurretDirection.West,
-            (< 0, 0) => TurretDirection.East,
+            ( > 0, 0) => TurretDirection.West,
+            ( < 0, 0) => TurretDirection.East,
 
             _ => TurretDirection.South,
         };
